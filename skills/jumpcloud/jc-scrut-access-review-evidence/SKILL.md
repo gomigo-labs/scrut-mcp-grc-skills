@@ -105,7 +105,7 @@ Scrut MCP (required for the capture step; skip capture if not connected):
 - **Read-only in JumpCloud.** Never call a JumpCloud write tool (`user_*`
   writes, `device_*` actions, `admin_update`, group/policy mutations). The only
   permitted write is the Scrut evidence capture in step 6. Hand remediation to
-  the gated Gap-to-Fix skill.
+  the gated `jc-scrut-remediate` skill.
 - If `scrut_upload_file` or `scrut_attach_evidence_document` errors, report it
   plainly and stop — do not silently retry or fabricate a successful filing.
   Known upstream quirk: non-CSV MIME types can fail with "no document object

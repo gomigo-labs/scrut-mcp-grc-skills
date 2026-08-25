@@ -46,6 +46,8 @@ Scrut MCP (policy source + document):
 - `scrut_search_documents` — find policies by name or keyword
 - `scrut_get_document_content` — read the policy body (exact name match opens
   automatically; partial matches return a candidate list)
+- `scrut_list_evidence` — find the evidence item to attach the gap report
+- `scrut_get_evidence` — read the item's requirements before filing
 - `scrut_upload_file` — upload the gap-report CSV
 - `scrut_attach_evidence_document` — attach with a note
 

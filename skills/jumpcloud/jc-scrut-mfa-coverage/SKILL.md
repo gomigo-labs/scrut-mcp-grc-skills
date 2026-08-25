@@ -85,13 +85,14 @@ Scrut MCP (required for the capture step; skip capture if not connected):
   attached to, the filename, the note, and the resulting status (expect Draft /
   pending approval) — or, when the Scrut MCP is not connected, the exported
   CSV plus instructions to attach it manually.
-- Offer handoff to the gated Gap-to-Fix skill to enforce MFA on the gap list.
+- Offer handoff to the gated `jc-scrut-remediate` skill to enforce MFA on the
+  gap list.
 
 ## Edge cases and honesty
 
 - **Read-only in JumpCloud.** Never call a JumpCloud write tool. The only
   permitted write is the Scrut evidence capture in step 5. Enforcement is
-  handled only by the gated Gap-to-Fix skill.
+  handled only by the gated `jc-scrut-remediate` skill.
 - If `scrut_upload_file` or `scrut_attach_evidence_document` errors, report it
   plainly and stop — do not silently retry or fabricate a successful filing.
   Known upstream quirk: non-CSV MIME types can fail with "no document object

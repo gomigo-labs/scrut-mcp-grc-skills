@@ -93,7 +93,7 @@ Scrut MCP (required for the capture step; skip capture if not connected):
   attached to, the filename, the note, and the resulting status (expect Draft /
   pending approval) — or, when the Scrut MCP is not connected, the exported
   CSV plus instructions to attach it manually.
-- Offer handoff to a gated device-remediation skill for any device action.
+- Offer handoff to the gated `jc-scrut-remediate` skill for any device action.
 
 ## Edge cases and honesty
 

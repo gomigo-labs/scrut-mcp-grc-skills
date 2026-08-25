@@ -79,8 +79,11 @@ window exceeds retention, state the window actually covered.
 ### A2. Find offboardings in the window (read-only)
 
 1. `di_events_get` with `startTime` covering the window → suspension and
-   deprovisioning events (e.g. `user_update` / association changes with
-   suspend semantics), capturing user, timestamp, and initiator.
+   deprovisioning events. Filter by `eventType` / `query` — note that
+   `initiatorId` filters by the **actor** (who performed the action), not the
+   offboarded user. Event-type names vary; discover the suspension event types
+   from the returned events rather than assuming a fixed name. Capture user,
+   timestamp, and initiator for each offboarding found.
 2. Cross-reference `users_list` / `user_get` → confirm each candidate is
    currently `suspended: true` (or otherwise deprovisioned).
 3. Note anyone flagged by `admin_list` as having held admin rights.
@@ -202,8 +205,9 @@ the user explicitly asks, using the Mode A5 format with a single row.
 - If `scrut_upload_file` or `scrut_attach_evidence_document` errors, report it
   plainly and stop — do not silently retry or fabricate a successful filing.
 - After attach, expect Draft / pending approval.
-- Complements `jc-scrut-terminated-dormant-access` (finds accounts that should
-  have been offboarded) and `jc-scrut-remediate` (closes the failing control).
+- Complements `jc-scrut-remediate` (closes a failing control). For finding
+  accounts that should have been offboarded, run a dormant/terminated-access
+  discovery pass (`users_list` + `di_events_get`) before this skill.
 
 ## Changelog
 
