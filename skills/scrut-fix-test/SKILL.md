@@ -8,7 +8,7 @@ description: >-
   user wants to fix it where their code lives. Triggers include "fix this failing
   test", "remediate our public S3 buckets", "what's failing in our cloud tests",
   and "our encryption test is failing, help me fix it".
-version: 1.2.0
+version: 1.2.1
 ---
 
 # Scrut: fix a failing cloud test
@@ -45,9 +45,13 @@ underlying infrastructure code in the repo, and point the user to Scrut to verif
 
    - **User named a test or a service** ("our S3 public-access test") →
      `scrut_search_documents(query: "<name or service>", response_format:
-     "json")`, take `products` entries with `type: "test"`, and **strip the
-     `cloud/tests/` prefix** from the `id` to get the `test_id`. Passing the
-     unstripped id to `scrut_get_test` returns `{"data": null}` with no error.
+     "json")`, take `products` entries with `type: "test"` (that bucket also
+     holds `policy`, `evidence` and `risk` entries — filter on `type`), and
+     **strip the path prefix** from the `id` to get the `test_id`. Three
+     prefixes occur: `cloud/tests/<uuid>`, `tests/<slug>` and
+     `evidences/<uuid>`. Passing an unstripped id to `scrut_get_test` returns
+     `{"data": null}` with no error. The default `limit` is normally enough;
+     if no `type: "test"` entry comes back, retry once at `limit: 50`.
    - **User asked what's failing** → `scrut_list_tests(limit: 0)` for exact
      counts, then page `test_status: "needs_attention"` with `limit: 200`,
      looping `offset = next_offset` until `has_more` is `false`. Group by
@@ -125,8 +129,8 @@ User: *"Our S3 public-access test is failing — fix it."*
   cloud/CSPM tests last, so a default-limit call is biased toward access-review
   and evidence rows. Search by keyword, or page to completion.
 - **A `{"data": null}` from `scrut_get_test` means a malformed id**, not a
-  missing test — strip any `cloud/tests/` prefix and retry before telling the
-  user the test does not exist.
+  missing test — strip any `cloud/tests/`, `tests/` or `evidences/` prefix and
+  retry before telling the user the test does not exist.
 - **Confirm before editing infra code.** Show the diff; do not silently rewrite
   IaC.
 - **Do not claim "fixed" from the agent alone.** Verification requires a
@@ -136,6 +140,10 @@ User: *"Our S3 public-access test is failing — fix it."*
 
 ## Changelog
 
+- **1.2.1** — id-stripping covers all three prefixes (`cloud/tests/`, `tests/`,
+  `evidences/`), note that `products` is a mixed bucket, and drop the
+  always-`limit: 50` advice — the default suffices and 50 costs more for the
+  same recall.
 - **1.2.0** — fix test discovery: search-first by keyword (`scrut_search_documents`
   returns tests), document the `cloud/tests/` id trap and the module-ordering
   bias that hid cloud tests behind hundreds of CAT tests, require paging to

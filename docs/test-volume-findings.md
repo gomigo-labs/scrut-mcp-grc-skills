@@ -51,6 +51,16 @@ Combined with `limit` defaulting to **50** and capping at **200**, this means:
 - Reaching a single cloud test requires `offset: 596`, or four sequential
   maximum-size calls.
 
+The 596 boundary is exact, confirmed by single-item probes: offset **595** is
+`moduleType: "vendor"` (`Vendor List Maintained`), offset **596** is the first
+`moduleType: "test"`, and offset **713** — the last item, `has_more: false` —
+is also `moduleType: "test"`. So `moduleType == "test"` is a clean **suffix**
+of the ordering, which is what makes the client-side boundary seek in
+[`scrut-find-tests`](../skills/scrut-find-tests/) sound: a ~10-probe binary
+search with `limit: 1` (~700 tokens) locates the first cloud offset at any
+library size, without the tail-seek's assumption that the cloud block is under
+200.
+
 The status filter does not rescue it. Of the **124** `needs_attention` tests,
 the cloud ones are items **#122, #123, #124**:
 
@@ -95,19 +105,25 @@ instead of four, ~200 tokens instead of ~75K. But the tool's own description
 advertises only "trust-vault documents, policies and evidence", and its name
 says *documents*, so an agent looking for tests never tries it.
 
-Worse, the default `limit` of 10 **silently suppresses tests**. `limit` applies
-per source, and tests share the `products` bucket with long policy/evidence
-content excerpts that outrank them:
+`limit` applies per source, and tests share the `products` bucket with long
+policy/evidence content excerpts that can outrank them — so a low `limit` does
+suppress tests. But the cliff sits **below** the default, not at it:
 
 | `scrut_search_documents(query: "MFA", …)` | Tests returned |
 |---|---|
 | `limit: 4` | **0** |
-| `limit: 50` | **4** (`MFA on root account`, `Slack MFA Enforcement Check`, `MFA on JumpCloud Users`, `IAM assume role lacks external ID and MFA`) |
+| **default (`limit: 10`)** | **4** (`MFA on root account`, `Slack MFA Enforcement Check`, `MFA on JumpCloud Users`, `IAM assume role lacks external ID and MFA`) |
+| `limit: 50` | **4** — the same four |
 
-So an agent can search for exactly the right thing, get zero tests, and
-correctly conclude "no test found" — while four exist. Recall also depends on
-the query resembling a test *title*: `"MFA"` surfaced policy prose, while
-`"root account MFA enabled"` ranked the test first.
+An earlier draft of this document claimed the default of 10 suppresses tests;
+a second verification pass disproved it. The default returned every matching
+test for both `"MFA"` and `"S3 bucket encryption"`, and raising `limit` to 50
+bought **no** additional recall. The practical risk is therefore smaller than
+first reported — but the *cost* risk runs the other way: blanket `limit: 50`
+advice adds up to 40 non-test entries whose `name` fields are document-body
+excerpts of 150–250 tokens each. Recall still depends on the query resembling
+a test *title*: `"MFA"` also surfaced policy prose, while a resource-plus-
+property phrasing ranks the test first.
 
 ### 2. The returned test id is not the id `scrut_get_test` accepts
 
@@ -124,6 +140,36 @@ scrut_get_test("integrations_slack-mfa-enabled")    → full detail       // wor
 
 An agent that copies the id verbatim gets an empty object and reasonably
 concludes the test does not exist. Silent nulls are worse than errors.
+
+### 2b. `products` entries are not what their field names suggest
+
+Three traps in the one array, all verified live:
+
+- **A third id form.** Alongside `cloud/tests/<uuid>` and `tests/<slug>` there
+  is `evidences/<uuid>` — and the **same UUID is returned twice in the same
+  response**, once as `type: "test"` and once as `type: "evidence"`
+  (`Security validation for change tickets`). An agent that does not
+  deduplicate by bare UUID reports one control as two findings.
+- **The bucket is mixed.** `products` also carries `type: "risk"` entries
+  (`MFA Not Enabled for CRM System and AWS`). Filtering on `type` is
+  mandatory, not defensive.
+- **`name` is not a name.** For `policy` and `evidence` entries, `name` holds
+  a chunk of document *body* — often a full policy section, 150–250 tokens.
+  Only `type: "test"` entries have a `name` that is a title. This is both a
+  rendering hazard (an agent echoing `products[].name` prints a wall of prose)
+  and the reason a high `limit` is expensive.
+
+### 2c. Two sources are unreliable, and one count is wrong
+
+- **`vault` fails on every search.** Every probe returned
+  `source_errors: [{source: "vault", upstreamStatus: 500, upstreamMessage:
+  "Forbidden", service: "kaiService"}]`, so `vaultDocuments` is always empty on
+  this org. Trust-vault documents are currently unsearchable, and an agent
+  reading only the empty bucket concludes they do not exist.
+- **Search `total_count` does not match the query.** `"MFA"` and
+  `"S3 bucket encryption"` — unrelated queries — both returned
+  `total_count: 13`, while `products` held 10 entries. It should not be quoted
+  as a match count.
 
 ### 3. `include_details: true` is a context bomb
 
@@ -206,12 +252,23 @@ In rough priority order. The first two remove most of the problem.
    history that makes the whole call fail is the one defect here that leaves
    an agent with *no* working path to the data.
 
-9. **Raise `scrut_search_documents`'s default `limit`, or give tests their own
-   result bucket** so they aren't crowded out by policy content chunks at the
-   default of 10. A `type` filter (`type: "test"`) would fix it outright.
+9. **Give tests their own result bucket in `scrut_search_documents`, or add a
+   `type` filter.** The default `limit` of 10 does return tests, so this is a
+   cost and clarity fix rather than a recall fix: today the only way to be sure
+   of test recall is to raise `limit` and pay for up to 40 document-body
+   excerpts. A `type: "test"` filter removes that trade-off outright. Also
+   return the bare `testId` (see fix 4), deduplicate the `evidences/<uuid>`
+   entry that is emitted twice under two `type`s, and rename or trim the `name`
+   field for content-chunk entries — it currently holds document body, not a
+   name.
 
 10. **Surface `Ignored` prominently in summaries.** At 44% of this library it
     materially changes posture reporting.
+
+11. **Fix the `vault` search source.** It returns `500 Forbidden`
+    (`kaiService`) on every query for this org, so trust-vault documents are
+    silently unsearchable. Also make search's `total_count` query-specific —
+    it returned the same value for unrelated queries.
 
 ## Client-side mitigations (shipped in this repo)
 

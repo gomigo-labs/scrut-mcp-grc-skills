@@ -9,7 +9,7 @@ description: >-
   test for X", "which tests cover encryption", "what's failing in our cloud
   tests", "do we have a test for MFA", "how many tests are failing", and any
   request to search, count, or summarize Scrut tests.
-version: 1.0.0
+version: 1.0.1
 ---
 
 # Scrut: find the right tests
@@ -63,11 +63,22 @@ Never answer from a first page.
 tests even though its description emphasizes documents.
 
 1. `scrut_search_documents(query: "<keyword>", response_format: "json")`.
-2. Read the **`products`** array and keep entries with `type: "test"`.
-3. **Strip the path prefix** from the entry's `id`. There are two forms:
+2. Read the **`products`** array and keep entries with `type: "test"`. That
+   bucket is **mixed** — `test`, `policy`, `evidence` and `risk` entries all
+   land in it — so always filter on `type`. Never assume a `products` entry is
+   a test because the query was about tests.
+3. **Strip the path prefix** from the entry's `id`. There are three forms:
    - `cloud/tests/<uuid>` → use the bare `<uuid>` (cloud/CSPM tests)
    - `tests/<slug>` → use the bare `<slug>`, e.g.
      `tests/integrations_slack-mfa-enabled` → `integrations_slack-mfa-enabled`
+   - `evidences/<uuid>` → use the bare `<uuid>` (evidence-backed CAT tests),
+     e.g. `evidences/a6c7b086-…` → `a6c7b086-…`
+
+   The `evidences/` form has a twist: the **same UUID also appears in the same
+   response as a separate entry with `type: "evidence"`**. Those are one thing
+   surfaced twice — the CAT test and the evidence task behind it. Deduplicate
+   by bare UUID before reporting counts, and never present them as two
+   separate findings.
 4. `scrut_get_test(test_id: "<stripped id>", response_format: "json")`.
 
 > **ID trap — silent empty result.** Passing an unstripped id to
@@ -75,15 +86,30 @@ tests even though its description emphasizes documents.
 > both forms. That is a malformed id, *not* a missing test — strip and retry
 > before reporting the test does not exist.
 
-**Always pass `limit: 50`** (the maximum). This is the single biggest factor
-in whether you find a test. Tests share the `products` bucket with policy and
-evidence content chunks, and `limit` applies **per source** — so at the default
-of 10, long policy excerpts crowd the tests out entirely:
+**Run the default `limit` first; raise it only if you got no tests.** Tests
+share the `products` bucket with policy and evidence content chunks, and
+`limit` applies **per source**, so a low limit can crowd tests out — but the
+default of 10 is normally enough. Measured on the 714-test org:
 
 | `scrut_search_documents(query: "MFA", …)` | Tests returned |
 |---|---|
 | `limit: 4` | **0** — four policy/evidence chunks only |
-| `limit: 50` | **4** — `MFA on root account`, `Slack MFA Enforcement Check`, `MFA on JumpCloud Users`, `IAM assume role lacks external ID and MFA` |
+| **default (`limit: 10`)** | **4** — all of them |
+| `limit: 50` | **4** — the same four |
+
+The recall cliff is real but sits *below* the default. Going to `limit: 50`
+bought **no** extra tests here while pulling in up to 40 more non-test
+entries, which is expensive (see the cost trap). So: search at the default,
+and if `products` contains no `type: "test"` entry, retry once at `limit: 50`
+before concluding no test exists.
+
+> **Cost trap — `name` is a content excerpt, not a name.** For `type: "policy"`
+> and `type: "evidence"` entries, `name` holds a **chunk of document body**,
+> commonly 150–250 tokens and sometimes a whole policy section. Only
+> `type: "test"` entries have a `name` that is an actual title. Two
+> consequences: never echo `products[].name` back to the user as a list of
+> titles, and expect `limit: 50` to cost several thousand tokens more than the
+> default for the same test recall.
 
 Search ranks best when the query **reads like a test title** — a resource plus
 a property (`"IAM user key rotation"`, `"root account MFA enabled"`) rather
@@ -106,7 +132,10 @@ verify you read it all.
 
 1. `scrut_list_tests(limit: 0)` first to learn the true `total_count`.
 2. Page with `limit: 200` and `response_format: "json"`, looping
-   `offset = next_offset` **until `has_more` is `false`**.
+   `offset = next_offset` **until `has_more` is `false`**. Pass
+   `include_summary: false` on every page after the first — otherwise the
+   summary block, including its full `by_assignee` map, is repeated verbatim in
+   all four responses for no added information.
 3. Confirm the number of items you collected equals `total_count`. If it does
    not, keep paging — do not summarize.
 4. **Group by `moduleType` before presenting.** Because the ordering is
@@ -138,6 +167,30 @@ also contains the tail of the CAT modules, and if the *first* item already has
 `isExistingCSPM: true` you have truncated the cloud tests and must page back
 further. The boundary is org-specific and moves as CAT tests are added, so
 derive it from `total_count` every time; never hard-code an offset.
+
+**When the cloud block might exceed 200, binary-search the boundary.** This is
+the robust version of the tail-seek and it works at any library size, because
+`moduleType == "test"` is a **suffix** of the ordering: every item at or after
+the boundary is a cloud test. A `limit: 1, include_summary: false` probe is
+~70 tokens, so ~10 probes locate the exact first cloud offset:
+
+```
+lo, hi = 0, total_count - 1
+while lo < hi:
+    mid = (lo + hi) // 2
+    item = scrut_list_tests(limit: 1, offset: mid, include_summary: false).items[0]
+    if item.moduleType == "test": hi = mid          # at or after the boundary
+    else:                         lo = mid + 1      # still in the CAT block
+# lo == first cloud-test offset
+```
+
+On the measured org the boundary is **596**, confirmed by direct probe: offset
+595 is `moduleType: "vendor"` (`Vendor List Maintained`) and offset 596 is the
+first `moduleType: "test"`. Offset 713 is the last item overall
+(`has_more: false`) and is also `moduleType: "test"` — so the block is 596–713,
+118 tests, and the suffix property holds at both ends. A ~10-probe search costs
+roughly 700 tokens; from `lo`, page forward with `limit: 200` to read the whole
+cloud block.
 
 ## Reading a test's detail
 
@@ -255,9 +308,26 @@ answers the "what else" half of the question for free. Strip the prefixes and
   present it as an active gap.
 - **Report tool errors plainly** rather than retrying blindly. Partial
   `source_errors` in a search response mean some sources failed — say which.
+  On the measured org the `vault` source fails on **every** search
+  (`upstreamStatus: 500`, `upstreamMessage: "Forbidden"`,
+  `service: "kaiService"`), so `vaultDocuments` comes back empty no matter the
+  query. Check `source_errors` before saying "no document matches" — an empty
+  bucket from a broken source is not evidence of absence.
+- **Never quote a search `total_count`.** It is not a reliable match count:
+  two unrelated queries (`"MFA"` and `"S3 bucket encryption"`) both returned
+  `total_count: 13` while `products` held 10 entries. Count the
+  `type: "test"` entries yourself and report that.
 
 ## Changelog
 
+- **1.0.1** — corrections from a second live verification pass: the search
+  recall cliff sits *below* the default `limit` (10 returns all matching tests;
+  50 adds cost, not recall), a third id form `evidences/<uuid>` that
+  double-surfaces with `type: "evidence"`, `products` also carrying
+  `type: "risk"`, `products[].name` being a content excerpt for non-test
+  entries, a persistently failing `vault` search source, unreliable search
+  `total_count`, `include_summary: false` on sweep pages, and a binary-search
+  boundary seek that survives a cloud block over 200.
 - **1.0.0** — initial release. Discovery strategies for large test libraries;
   documents the module-ordering bias, the `cloud/tests/` id trap, the
   `limit: 0` counts shortcut, and the `include_details` cost.
