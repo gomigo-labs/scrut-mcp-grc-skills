@@ -12,6 +12,21 @@ Each skill is a self-contained folder with a `SKILL.md`. Your agent loads it on 
 | [`scrut-compliance-digest`](skills/scrut-compliance-digest/) | Summarizes program state — frameworks, controls, policies, evidence, tests — for leadership. | "Give me a compliance digest for the board." |
 | [`scrut-answer-questionnaire`](skills/scrut-answer-questionnaire/) | Drafts questionnaire answers from your documented posture, with citations; flags gaps. | "Answer this vendor security questionnaire." |
 | [`scrut-fix-test`](skills/scrut-fix-test/) | Finds a failing cloud test, pulls remediation, and helps fix your IaC; verify by re-running the test in Scrut (MCP re-runs coming in a future update). | "Fix our failing S3 public-access test." |
+| [`scrut-find-tests`](skills/scrut-find-tests/) | Locates the right tests in a large library without missing whole categories to pagination. | "Is there a test for S3 encryption?" |
+
+## Working with a large test library
+
+Test libraries get big — a few hundred to a few thousand tests. `scrut_list_tests`
+returns them in a fixed order (cloud/CSPM tests **last**) with a default page of
+50 and a cap of 200, so a naive call reads a biased slice and can miss entire
+categories. On a measured 714-test org, a default call returned 50 vendor
+access-review rows and **zero** cloud tests.
+
+Install [`scrut-find-tests`](skills/scrut-find-tests/) alongside the others if
+you ask questions about tests — it teaches the agent to search by keyword, take
+counts cheaply, and page to completion when it matters.
+
+[**Full findings and the server-side fixes they call for →**](docs/test-volume-findings.md)
 
 ## Prerequisite: connect the Scrut MCP server
 
